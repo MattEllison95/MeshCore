@@ -159,6 +159,10 @@ protected:
   bool onChannelLoaded(uint8_t channel_idx, const ChannelDetails& ch) override { return setChannel(channel_idx, ch); }
   bool getChannelForSave(uint8_t channel_idx, ChannelDetails& ch) override { return getChannel(channel_idx, ch); }
 
+  // Tells the other companion clients about a message sent by one of them.
+  void echoSentChannelMessage(uint8_t channel_idx, uint32_t timestamp,
+                              const char* text, int text_len);
+
   void clearPendingReqs() {
     pending_login = pending_status = pending_telemetry = pending_discovery = pending_req = 0;
   }

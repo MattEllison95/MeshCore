@@ -1,16 +1,17 @@
 #include "ArduinoSerialInterface.h"
 
-#define RECV_STATE_IDLE        0
-#define RECV_STATE_HDR_FOUND   1
-#define RECV_STATE_LEN1_FOUND  2
-#define RECV_STATE_LEN2_FOUND  3
+#ifdef MACMESH_UART_DIAGNOSTIC
+volatile uint32_t macmesh_uart_diag_rx_bytes = 0;
+volatile uint32_t macmesh_uart_diag_tx_frames = 0;
+#endif
 
 void ArduinoSerialInterface::enable() { 
   _isEnabled = true;
-  _state = RECV_STATE_IDLE;
+  _parser.reset();
 }
 void ArduinoSerialInterface::disable() {
   _isEnabled = false;
+  _parser.reset();
 }
 
 bool ArduinoSerialInterface::isConnected() const { 
@@ -22,7 +23,8 @@ bool ArduinoSerialInterface::isWriteBusy() const {
 }
 
 size_t ArduinoSerialInterface::writeFrame(const uint8_t src[], size_t len) {
-  if (len > MAX_FRAME_SIZE) {
+  if (!_isEnabled || _serial == NULL || src == NULL ||
+      len == 0 || len > MAX_FRAME_SIZE) {
     // frame is too big!
     return 0;
   }
@@ -32,41 +34,34 @@ size_t ArduinoSerialInterface::writeFrame(const uint8_t src[], size_t len) {
   hdr[1] = (len & 0xFF);  // LSB
   hdr[2] = (len >> 8);    // MSB
 
-  _serial->write(hdr, 3);
+  if (_serial->write(hdr, 3) != 3) {
+    return 0;
+  }
+#ifdef MACMESH_UART_DIAGNOSTIC
+  macmesh_uart_diag_tx_frames++;
+#endif
   return _serial->write(src, len);
 }
 
 size_t ArduinoSerialInterface::checkRecvFrame(uint8_t dest[]) {
+  if (!_isEnabled || _serial == NULL || dest == NULL) {
+    return 0;
+  }
+
+  _parser.expire(millis());
   while (_serial->available()) {
     int c = _serial->read();
     if (c < 0) break;
 
-    switch (_state) {
-      case RECV_STATE_IDLE:
-        if (c == '<') {
-          _state = RECV_STATE_HDR_FOUND;
-        }
-        break;
-      case RECV_STATE_HDR_FOUND:
-        _frame_len = (uint8_t)c;   // LSB
-        _state = RECV_STATE_LEN1_FOUND;
-        break;
-      case RECV_STATE_LEN1_FOUND:
-        _frame_len |= ((uint16_t)c) << 8;   // MSB
-        rx_len = 0;
-        _state = _frame_len > 0 ? RECV_STATE_LEN2_FOUND : RECV_STATE_IDLE;
-        break;
-      default:
-        if (rx_len < MAX_FRAME_SIZE) {
-          rx_buf[rx_len] = (uint8_t)c;   // rest of frame will be discarded if > MAX
-        }
-        rx_len++;
-        if (rx_len >= _frame_len) {  // received a complete frame?
-          if (_frame_len > MAX_FRAME_SIZE) _frame_len = MAX_FRAME_SIZE;    // truncate
-          memcpy(dest, rx_buf, _frame_len);
-          _state = RECV_STATE_IDLE;  // reset state, for next frame
-          return _frame_len;
-        }
+#ifdef MACMESH_UART_DIAGNOSTIC
+    macmesh_uart_diag_rx_bytes++;
+#endif
+
+    int result = _parser.feed((uint8_t)c, millis());
+    if (result == SerialFrameParser<MAX_FRAME_SIZE>::FRAME_READY) {
+      size_t frame_len = _parser.frameLength();
+      memcpy(dest, _parser.frame(), frame_len);
+      return frame_len;
     }
   }
   return 0;

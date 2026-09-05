@@ -62,6 +62,9 @@ class BaseChatMesh : public mesh::Mesh {
 
   ContactInfo contacts[MAX_CONTACTS+MAX_ANON_CONTACTS];
   int num_contacts;
+  uint32_t _clock_vote_time;    // pending large clock correction, and how many
+  uint8_t _clock_vote_count;    // neighbours have agreed to it so far
+  bool _clock_authoritative;    // a host set the time; stop listening to adverts
   int sort_array[MAX_CONTACTS+MAX_ANON_CONTACTS];
   int matching_peer_indexes[MAX_SEARCH_RESULTS];
   unsigned long txt_send_timeout;
@@ -86,11 +89,22 @@ protected:
     num_channels = 0;
   #endif
     txt_send_timeout = 0;
+    _clock_vote_time = 0;
+    _clock_vote_count = 0;
+    _clock_authoritative = false;
     _pendingLoopback = NULL;
     memset(connections, 0, sizeof(connections));
   }
 
   void bootstrapRTCfromContacts();
+  // Guards against neighbours (and our own RTC) reporting an impossible time.
+  uint32_t clockFloor() const;
+  bool isPlausibleAdvertTime(uint32_t t);
+  bool isPlausibleOwnClock(uint32_t t);
+  uint32_t estimateTimeFromContacts();
+  void considerAdvertTime(uint32_t timestamp);
+  // Time from a host with a real clock: overrides the mesh from here on.
+  void setClockAuthoritative(uint32_t secs);
   void resetContacts() { num_contacts = 0; }
   void populateContactFromAdvert(ContactInfo& ci, const mesh::Identity& id, const AdvertDataParser& parser, uint32_t timestamp);
   ContactInfo* allocateContactSlot(bool transient_only=false); // helper to find slot for new contact

@@ -539,6 +539,51 @@ void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uin
   queueMessage(from, TXT_TYPE_SIGNED_PLAIN, pkt, sender_timestamp, sender_prefix, 4, text);
 }
 
+/*
+ * Tell the OTHER companion clients about a channel message this node just sent
+ * on one client's behalf. Nothing else does: a sent message is never looped
+ * back, because upstream assumes a node has exactly one client and that client
+ * renders its own message locally. With a Macintosh on the UART and a phone on
+ * BLE, the phone otherwise never learns the Macintosh said anything.
+ *
+ * The frame is the same one a genuinely received message produces, so no
+ * client needs to know the difference: zero hops because it originated here,
+ * and no SNR because it never crossed the air. The text is composed exactly as
+ * sendGroupMessage() puts it on the air, "<name>: <text>", which is where
+ * every client reads the sender's name from.
+ */
+void MyMesh::echoSentChannelMessage(uint8_t channel_idx, uint32_t timestamp,
+                                    const char *text, int text_len) {
+  int i = 0;
+  if (app_target_ver >= 3) {
+    out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
+    out_frame[i++] = 0;   // SNR: did not arrive over the air
+    out_frame[i++] = 0;   // reserved1
+    out_frame[i++] = 0;   // reserved2
+  } else {
+    out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV;
+  }
+  out_frame[i++] = channel_idx;
+  out_frame[i++] = 0;     // zero hops: this node is the origin
+  out_frame[i++] = TXT_TYPE_PLAIN;
+  memcpy(&out_frame[i], &timestamp, 4);
+  i += 4;
+
+  int room = MAX_FRAME_SIZE - i;
+  int prefix = snprintf((char *)&out_frame[i], room, "%s: ", _prefs.node_name);
+  if (prefix < 0) return;
+  if (prefix > room) prefix = room;        // snprintf reports what it wanted
+  i += prefix;
+
+  room = MAX_FRAME_SIZE - i;
+  if (text_len > room) text_len = room;
+  if (text_len > 0) {
+    memcpy(&out_frame[i], text, text_len);
+    i += text_len;
+  }
+  _serial->writeFrameToOthers(out_frame, i);
+}
+
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
   int i = 0;
@@ -925,6 +970,9 @@ void MyMesh::begin(bool has_display) {
   // load persisted prefs
   _store->loadPrefs(_prefs, sensors.node_lat, sensors.node_lon);
 
+  strncpy(_prefs.node_name, "MacMesh", sizeof(_prefs.node_name) - 1);
+  _prefs.node_name[sizeof(_prefs.node_name) - 1] = 0;
+
   // sanitise bad pref values
   _prefs.rx_delay_base = constrain(_prefs.rx_delay_base, 0, 20.0f);
   _prefs.airtime_factor = constrain(_prefs.airtime_factor, 0, 9.0f);
@@ -1130,6 +1178,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       bool success = getChannel(channel_idx, channel);
       if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i)) {
         writeOKFrame();
+        echoSentChannelMessage(channel_idx, msg_timestamp, text, len - i);
       } else {
         writeErrFrame(ERR_CODE_NOT_FOUND); // bad channel_idx
       }
@@ -1226,9 +1275,17 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_SET_DEVICE_TIME && len >= 5) {
     uint32_t secs;
     memcpy(&secs, &cmd_frame[1], 4);
-    uint32_t curr = getRTCClock()->getCurrentTime();
-    if (secs >= curr) {
-      getRTCClock()->setCurrentTime(secs);
+    /*
+     * Forwards OR backwards. Refusing to go back made a clock that had run
+     * ahead impossible to fix: the phone knows the real time, sends it, and
+     * every attempt came back ERR_CODE_ILLEGAL_ARG because the node's own
+     * wrong time was later. A host with a real clock is the best source there
+     * is here -- better than the mesh, whose nodes bootstrap off each other
+     * and drift together -- so it is allowed to correct in either direction,
+     * subject only to the same sanity window used for adverts.
+     */
+    if (isPlausibleAdvertTime(secs) || isPlausibleOwnClock(secs)) {
+      setClockAuthoritative(secs);
       writeOKFrame();
     } else {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);

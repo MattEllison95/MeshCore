@@ -24,7 +24,10 @@ AutoDiscoverRTCClock rtc_clock(fallback_clock);
 #endif
 
 #ifdef DISPLAY_CLASS
-  DISPLAY_CLASS display(NULL);
+  // Hand the display the shared Vext pin, as every other Heltec variant does.
+  // Without it nothing ever claims the rail, so board.begin() leaves GPIO36 at
+  // its inactive level and the OLED is never powered.
+  DISPLAY_CLASS display(&board.periph_power);
   MomentaryButton user_btn(PIN_USER_BTN, 1000, true);
 #endif
 

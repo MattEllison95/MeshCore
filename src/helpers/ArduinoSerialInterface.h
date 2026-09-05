@@ -1,18 +1,23 @@
 #pragma once
 
 #include "BaseSerialInterface.h"
+#include "SerialFrameParser.h"
 #include <Arduino.h>
+
+#ifndef ARDUINO_SERIAL_FRAME_TIMEOUT_MS
+#define ARDUINO_SERIAL_FRAME_TIMEOUT_MS 1000
+#endif
 
 class ArduinoSerialInterface : public BaseSerialInterface {
   bool _isEnabled;
-  uint8_t _state;
-  uint16_t _frame_len;
-  uint16_t rx_len;
   Stream* _serial;
-  uint8_t rx_buf[MAX_FRAME_SIZE];
+  SerialFrameParser<MAX_FRAME_SIZE> _parser;
 
 public:
-  ArduinoSerialInterface() { _isEnabled = false; _state = 0; }
+  ArduinoSerialInterface()
+      : _isEnabled(false),
+        _serial(NULL),
+        _parser('<', ARDUINO_SERIAL_FRAME_TIMEOUT_MS) {}
 
   void begin(Stream& serial) { 
     _serial = &serial; 

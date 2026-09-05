@@ -9,6 +9,93 @@
   #define TXT_ACK_DELAY     200
 #endif
 
+/* ---- clock plausibility ---------------------------------------------------
+ *
+ * Adverts carry the sender's own idea of the time, and some nodes out there
+ * have that badly wrong. Trusting them without bounds is how this node ended
+ * up with an RTC reading 2037: a single neighbour advertised a 2037 timestamp,
+ * this node adopted it, and since the clock only ever moves forward there was
+ * no way back -- every message it sent afterwards was stamped a decade out.
+ *
+ * The floor is the firmware's own build date: this code cannot legitimately be
+ * running before it was compiled. The ceiling floats above whichever is later,
+ * the build date or the clock we already hold, so a board deployed for years
+ * still accepts real time from its neighbours after a power-on reset wipes the
+ * RTC back to the ESP32 default.
+ */
+/* How far past the time we already hold an advert may be and still be taken
+   seriously, and how far past the build date this node's own clock may be
+   before it is treated as corrupt at boot. */
+#define RTC_MAX_AHEAD_SECS    (2UL * 365 * 24 * 60 * 60)
+#define RTC_MAX_RUNTIME_SECS  (3UL * 365 * 24 * 60 * 60)
+
+/* A forward step this small is ordinary drift and is taken on one node's word.
+   Anything larger has to be agreed by RTC_QUORUM nodes whose timestamps fall
+   within RTC_CLUSTER_SECS of each other -- otherwise one node running days
+   fast drags this one with it, permanently, because the clock never descends
+   on its own. RTC_RESYNC_SLACK is how far the stored contacts have to disagree
+   with the clock at boot before the clock is the one presumed wrong. */
+#define RTC_SMALL_STEP_SECS   300UL
+#define RTC_CLUSTER_SECS      900UL
+#define RTC_QUORUM            3
+#define RTC_RESYNC_SLACK      3600UL
+
+/* __DATE__ is "Mmm dd yyyy" -- fixed width, with a space for a leading zero. */
+static constexpr int kBuildYear =
+    (__DATE__[7] - '0') * 1000 + (__DATE__[8] - '0') * 100 +
+    (__DATE__[9] - '0') * 10 + (__DATE__[10] - '0');
+static constexpr int kBuildMonth =
+    (__DATE__[0] == 'J' && __DATE__[1] == 'a') ? 1 :
+    (__DATE__[0] == 'F') ? 2 :
+    (__DATE__[0] == 'M' && __DATE__[2] == 'r') ? 3 :
+    (__DATE__[0] == 'A' && __DATE__[1] == 'p') ? 4 :
+    (__DATE__[0] == 'M') ? 5 :
+    (__DATE__[0] == 'J' && __DATE__[2] == 'n') ? 6 :
+    (__DATE__[0] == 'J') ? 7 :
+    (__DATE__[0] == 'A') ? 8 :
+    (__DATE__[0] == 'S') ? 9 :
+    (__DATE__[0] == 'O') ? 10 :
+    (__DATE__[0] == 'N') ? 11 : 12;
+static constexpr int kBuildDay =
+    (__DATE__[4] == ' ' ? 0 : (__DATE__[4] - '0') * 10) + (__DATE__[5] - '0');
+
+/* days_from_civil -- Howard Hinnant's calendar algorithm. Split into one-line
+   helpers because C++11 constexpr allows a single return statement per
+   function, and this file is built as C++11. */
+static constexpr long civil_year(long y, unsigned m) { return y - (m <= 2 ? 1 : 0); }
+static constexpr long civil_era(long y) { return (y >= 0 ? y : y - 399) / 400; }
+static constexpr unsigned civil_yoe(long y) { return (unsigned)(y - civil_era(y) * 400); }
+static constexpr unsigned civil_doy(unsigned m, unsigned d) {
+  return (153u * (m > 2 ? m - 3u : m + 9u) + 2u) / 5u + d - 1u;
+}
+static constexpr unsigned civil_doe(long y, unsigned m, unsigned d) {
+  return civil_yoe(y) * 365u + civil_yoe(y) / 4u - civil_yoe(y) / 100u + civil_doy(m, d);
+}
+static constexpr long days_from_civil(long y, unsigned m, unsigned d) {
+  return civil_era(civil_year(y, m)) * 146097L
+       + (long)civil_doe(civil_year(y, m), m, d) - 719468L;
+}
+
+static constexpr uint32_t kFirmwareBuildTime =
+    (uint32_t)(days_from_civil(kBuildYear, (unsigned)kBuildMonth,
+                               (unsigned)kBuildDay) * 86400L);
+
+uint32_t BaseChatMesh::clockFloor() const { return kFirmwareBuildTime; }
+
+bool BaseChatMesh::isPlausibleAdvertTime(uint32_t t) {
+  uint32_t now = getRTCClock()->getCurrentTime();
+  uint32_t base = (now > kFirmwareBuildTime) ? now : kFirmwareBuildTime;
+  return t >= kFirmwareBuildTime && t <= base + RTC_MAX_AHEAD_SECS;
+}
+
+bool BaseChatMesh::isPlausibleOwnClock(uint32_t t) {
+  // Measured against the BUILD DATE, never against the current clock. A bound
+  // that floats with the value it is checking can never reject anything, which
+  // is exactly how an RTC sitting at 2037 kept passing for plausible.
+  return t >= kFirmwareBuildTime &&
+         t <= kFirmwareBuildTime + RTC_MAX_RUNTIME_SECS;
+}
+
 void BaseChatMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis) {
   sendFlood(pkt, delay_millis);
 }
@@ -55,15 +142,109 @@ void BaseChatMesh::sendAckTo(const ContactInfo& dest, const uint8_t* ack_hash, u
   }
 }
 
-void BaseChatMesh::bootstrapRTCfromContacts() {
-  uint32_t latest = 0;
+/*
+ * The newest advert timestamp that at least RTC_QUORUM contacts agree on, to
+ * within RTC_CLUSTER_SECS. Ranking alone was not enough: taking the largest
+ * let one node with a bad clock decide the time, and taking the Kth largest
+ * still lost to any K nodes running fast together. Requiring a CLUSTER means a
+ * stray value has to be corroborated by neighbours close to it, and an
+ * isolated one is passed over however large it is.
+ *
+ * O(n^2) over the contact table, run once at boot. At MAX_CONTACTS that is a
+ * few thousand comparisons.
+ */
+uint32_t BaseChatMesh::estimateTimeFromContacts() {
+  uint32_t best = 0;
+
   for (int i = 0; i < num_contacts; i++) {
-    if (contacts[i].lastmod > latest) {
-      latest = contacts[i].lastmod;
+    uint32_t v = contacts[i].last_advert_timestamp;
+    int votes = 0;
+    uint32_t lowest = v;
+
+    if (v == 0 || !isPlausibleAdvertTime(v)) continue;
+    if (v <= best) continue;                    // cannot improve on what we have
+
+    for (int j = 0; j < num_contacts; j++) {
+      uint32_t w = contacts[j].last_advert_timestamp;
+      if (w == 0 || !isPlausibleAdvertTime(w)) continue;
+      if (w <= v && v - w <= RTC_CLUSTER_SECS) {
+        votes++;
+        if (w < lowest) lowest = w;
+      }
     }
+    // Adopt the bottom of the cluster, not its top: erring late is what got
+    // this node stuck in the first place.
+    if (votes >= RTC_QUORUM) best = lowest;
   }
-  if (latest != 0) {
-    getRTCClock()->setCurrentTime(latest + 1);
+  return best;
+}
+
+void BaseChatMesh::bootstrapRTCfromContacts() {
+  // A clock already outside the plausible window is worse than no clock: it
+  // makes every neighbour look "behind" and so can never be corrected. Pull it
+  // back to the build date first, then let the contacts raise it from there.
+  // The value survives a reflash, so it has to be fixed at boot.
+  if (!isPlausibleOwnClock(getRTCClock()->getCurrentTime())) {
+    getRTCClock()->setCurrentTime(clockFloor());
+  }
+
+  uint32_t est = estimateTimeFromContacts();
+  if (est == 0) return;
+
+  uint32_t now = getRTCClock()->getCurrentTime();
+  // Boot is the one safe moment to step BACKWARDS. Without it a clock that
+  // once ran ahead stays ahead for good, since every later advert then looks
+  // like the past. Only a corroborated estimate that disagrees by more than an
+  // hour is allowed to do it, so ordinary staleness never drags the clock down.
+  if (est > now || now - est > RTC_RESYNC_SLACK) {
+    getRTCClock()->setCurrentTime(est + 1);
+  }
+}
+
+/*
+ * Runtime adoption. Small forward corrections are taken on sight; a large jump
+ * has to be voted for. A lone node running days fast keeps replacing the
+ * pending candidate and never reaches quorum, while several correctly-set
+ * neighbours cluster and win within a few adverts on a busy mesh.
+ */
+void BaseChatMesh::setClockAuthoritative(uint32_t secs) {
+  getRTCClock()->setCurrentTime(secs);
+  _clock_authoritative = true;
+  _clock_vote_count = 0;
+}
+
+void BaseChatMesh::considerAdvertTime(uint32_t timestamp) {
+  uint32_t now = getRTCClock()->getCurrentTime();
+
+  /*
+   * Once a host has told us the real time, the mesh does not get a say. Taking
+   * time from adverts is a fallback for a node that has never been set, not an
+   * ongoing correction: a good part of any mesh runs fast, those nodes
+   * corroborate each other, and adopting their consensus walks the clock
+   * steadily forward with no way back.
+   */
+  if (_clock_authoritative) return;
+
+  if (timestamp <= now || !isPlausibleAdvertTime(timestamp)) return;
+
+  if (timestamp - now <= RTC_SMALL_STEP_SECS) {
+    getRTCClock()->setCurrentTime(timestamp + 1);
+    return;
+  }
+
+  uint32_t spread = (timestamp > _clock_vote_time)
+                        ? timestamp - _clock_vote_time
+                        : _clock_vote_time - timestamp;
+  if (_clock_vote_count != 0 && spread <= RTC_CLUSTER_SECS) {
+    _clock_vote_count++;
+    if (timestamp < _clock_vote_time) _clock_vote_time = timestamp;  // the low end
+  } else {
+    _clock_vote_time = timestamp;
+    _clock_vote_count = 1;
+  }
+  if (_clock_vote_count >= RTC_QUORUM) {
+    getRTCClock()->setCurrentTime(_clock_vote_time + 1);
+    _clock_vote_count = 0;
   }
 }
 
@@ -181,6 +362,7 @@ void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, 
     from->gps_lon = parser.getIntLon();
   }
   from->last_advert_timestamp = timestamp;
+  considerAdvertTime(timestamp);
   from->lastmod = getRTCClock()->getCurrentTime();
 
   onDiscoveredContact(*from, is_new, packet->path_len, packet->path);       // let UI know

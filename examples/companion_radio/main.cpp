@@ -2,6 +2,11 @@
 #include <Mesh.h>
 #include "MyMesh.h"
 
+#ifdef MACMESH_UART_DIAGNOSTIC
+extern volatile uint32_t macmesh_uart_diag_rx_bytes;
+extern volatile uint32_t macmesh_uart_diag_tx_frames;
+#endif
+
 // Believe it or not, this std C function is busted on some platforms!
 static uint32_t _atoi(const char* sp) {
   uint32_t n = 0;
@@ -41,6 +46,18 @@ static uint32_t _atoi(const char* sp) {
     #ifndef TCP_PORT
       #define TCP_PORT 5000
     #endif
+  #elif defined(BLE_PIN_CODE) && defined(SERIAL_RX)
+    /* Both transports at once: the Macintosh on the header UART and a phone or
+       web app over BLE. MyMesh holds one interface pointer, so a fan-out
+       stands in for it and forwards to both. */
+    #include <helpers/esp32/SerialBLEInterface.h>
+    #include <helpers/ArduinoSerialInterface.h>
+    #include <helpers/MultiSerialInterface.h>
+    SerialBLEInterface ble_interface;
+    ArduinoSerialInterface uart_interface;
+    MultiSerialInterface serial_interface;
+    HardwareSerial companion_serial(1);
+    #define COMPANION_UART_AND_BLE 1
   #elif defined(BLE_PIN_CODE)
     #include <helpers/esp32/SerialBLEInterface.h>
     SerialBLEInterface serial_interface;
@@ -111,8 +128,46 @@ void halt() {
   unsigned long last_wifi_reconnect_attempt = 0;
 #endif
 
+#ifndef SERIAL_BAUD
+  #define SERIAL_BAUD 115200
+#endif
+
+#if defined(MACMESH_SERIAL_TEST_RESPONDER) && defined(SERIAL_RX)
+static const uint8_t MACMESH_SERIAL_TEST_REQUEST[] = "MMTEST1?\r\n";
+static const uint8_t MACMESH_SERIAL_TEST_REPLY[] = "MMTEST1!\r\n";
+static size_t macmesh_serial_test_matched = 0;
+
+static void macmesh_run_serial_test_responder() {
+  while (companion_serial.available()) {
+    int value = companion_serial.read();
+    if (value < 0) {
+      break;
+    }
+
+    uint8_t byte = (uint8_t)value;
+    if (byte == MACMESH_SERIAL_TEST_REQUEST[macmesh_serial_test_matched]) {
+      macmesh_serial_test_matched++;
+    } else {
+      // Preserve the one-byte prefix overlap in "...M" followed by the next
+      // request. No arbitrary traffic is echoed back to the Macintosh.
+      macmesh_serial_test_matched =
+          byte == MACMESH_SERIAL_TEST_REQUEST[0] ? 1 : 0;
+    }
+
+    if (macmesh_serial_test_matched ==
+        sizeof(MACMESH_SERIAL_TEST_REQUEST) - 1) {
+      companion_serial.write(MACMESH_SERIAL_TEST_REPLY,
+                             sizeof(MACMESH_SERIAL_TEST_REPLY) - 1);
+      companion_serial.flush();
+      macmesh_serial_test_matched = 0;
+    }
+  }
+}
+#endif
+
 void setup() {
   Serial.begin(115200);
+
 
   board.begin();
 
@@ -180,9 +235,17 @@ void setup() {
   //   char dev_name[32+16];
   //   sprintf(dev_name, "%s%s", BLE_NAME_PREFIX, the_mesh.getNodeName());
   //   serial_interface.begin(dev_name, the_mesh.getBLEPin());
-  #if defined(SERIAL_RX)
+  #if defined(COMPANION_UART_AND_BLE)
     companion_serial.setPins(SERIAL_RX, SERIAL_TX);
-    companion_serial.begin(115200);
+    companion_serial.begin(SERIAL_BAUD);
+    uart_interface.begin(companion_serial);
+    ble_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
+                        the_mesh.getBLEPin());
+    serial_interface.add(&uart_interface);
+    serial_interface.add(&ble_interface);
+  #elif defined(SERIAL_RX)
+    companion_serial.setPins(SERIAL_RX, SERIAL_TX);
+    companion_serial.begin(SERIAL_BAUD);
     serial_interface.begin(companion_serial);
   #else
     serial_interface.begin(Serial);
@@ -215,16 +278,28 @@ void setup() {
 
   WiFi.begin(WIFI_SSID, WIFI_PWD);
   serial_interface.begin(TCP_PORT);
+#elif defined(COMPANION_UART_AND_BLE)
+  companion_serial.setPins(SERIAL_RX, SERIAL_TX);
+  companion_serial.begin(SERIAL_BAUD);
+  uart_interface.begin(companion_serial);
+  ble_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
+                      the_mesh.getBLEPin());
+  serial_interface.add(&uart_interface);
+  serial_interface.add(&ble_interface);
 #elif defined(BLE_PIN_CODE)
   serial_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
 #elif defined(SERIAL_RX)
   companion_serial.setPins(SERIAL_RX, SERIAL_TX);
-  companion_serial.begin(115200);
+  companion_serial.begin(SERIAL_BAUD);
+#ifndef MACMESH_SERIAL_TEST_RESPONDER
   serial_interface.begin(companion_serial);
+#endif
 #else
   serial_interface.begin(Serial);
 #endif
+#ifndef MACMESH_SERIAL_TEST_RESPONDER
   the_mesh.startInterface(serial_interface);
+#endif
 #else
   #error "need to define filesystem"
 #endif
@@ -243,10 +318,28 @@ void setup() {
 }
 
 void loop() {
+#if defined(MACMESH_SERIAL_TEST_RESPONDER) && defined(SERIAL_RX)
+  macmesh_run_serial_test_responder();
+#endif
   the_mesh.loop();
   sensors.loop();
 #ifdef DISPLAY_CLASS
   ui_task.loop();
+#ifdef MACMESH_UART_DIAGNOSTIC
+  static uint32_t next_diag_frame = 0;
+  if (millis() >= next_diag_frame) {
+    char rx_text[24];
+    char tx_text[24];
+    next_diag_frame = millis() + 250;
+    snprintf(rx_text, sizeof(rx_text), "Mac RX: %lu", (unsigned long)macmesh_uart_diag_rx_bytes);
+    snprintf(tx_text, sizeof(tx_text), "Mac TX: %lu", (unsigned long)macmesh_uart_diag_tx_frames);
+    display.startFrame();
+    display.drawTextCentered(display.width() / 2, 18, "MacMesh UART test");
+    display.drawTextCentered(display.width() / 2, 36, rx_text);
+    display.drawTextCentered(display.width() / 2, 50, tx_text);
+    display.endFrame();
+  }
+#endif
 #endif
   rtc_clock.tick();
 
