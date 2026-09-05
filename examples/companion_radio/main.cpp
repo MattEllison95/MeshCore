@@ -128,6 +128,62 @@ void halt() {
   unsigned long last_wifi_reconnect_attempt = 0;
 #endif
 
+/*
+ * WIFI PURELY AS A CLOCK SOURCE (MacMesh)
+ *
+ * MeshCore has no NTP, so a node with no GPS and no phone ever attached has no
+ * source of real time. It cold-boots to 2024, gets clamped to the firmware
+ * build date, and is then raised only by adverts from neighbours running the
+ * same bootstrap -- a consensus that lags real time by days and corroborates
+ * itself, so it never converges.
+ *
+ * This brings WiFi up for SNTP and nothing else. It deliberately does NOT use
+ * WIFI_SSID: that macro is the companion-TRANSPORT selector, and defining it
+ * would move the companion protocol to TCP and take the serial port away from
+ * the Macintosh. The serial link is the whole point of this carrier, so the
+ * feature gets its own flag and leaves the transport chain untouched.
+ *
+ * Credentials live in NodePrefs, set over the companion protocol and persisted,
+ * so a node can be pointed at a network without a reflash. No SSID means the
+ * radio is never brought up.
+ */
+#if defined(ESP32) && defined(MACMESH_WIFI_TIME)
+  #include <WiFi.h>
+  #include <time.h>
+  #ifndef MACMESH_NTP_SERVER
+    #define MACMESH_NTP_SERVER "pool.ntp.org"
+  #endif
+  static bool macmesh_ntp_applied = false;
+  static unsigned long macmesh_ntp_next_poll = 0;
+
+  static void macmeshStartWifiTime() {
+    const NodePrefs* prefs = the_mesh.getNodePrefs();
+    if (prefs->wifi_ssid[0] == 0) return;   // never configured
+
+    board.setInhibitSleep(true);   // a sleeping node never finishes the handshake
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    WiFi.begin(prefs->wifi_ssid, prefs->wifi_psk);
+    // UTC with no DST rules: MeshCore timestamps are epoch seconds throughout.
+    configTime(0, 0, MACMESH_NTP_SERVER);
+  }
+
+  static void macmeshPollWifiTime() {
+    if (macmesh_ntp_applied) return;
+    if (millis() < macmesh_ntp_next_poll) return;
+    macmesh_ntp_next_poll = millis() + 2000;
+    if (WiFi.status() != WL_CONNECTED) return;
+
+    /* Before SNTP answers, time() returns something near the epoch. Rather than
+       test that with a second magic constant, hand it to the same plausibility
+       gate CMD_SET_DEVICE_TIME uses and let it refuse. */
+    time_t t = time(NULL);
+    if (t > 0 && the_mesh.applyExternalTime((uint32_t)t)) {
+      macmesh_ntp_applied = true;
+    }
+  }
+#endif
+
 #ifndef SERIAL_BAUD
   #define SERIAL_BAUD 115200
 #endif
@@ -300,6 +356,9 @@ void setup() {
 #ifndef MACMESH_SERIAL_TEST_RESPONDER
   the_mesh.startInterface(serial_interface);
 #endif
+#if defined(MACMESH_WIFI_TIME)
+  macmeshStartWifiTime();
+#endif
 #else
   #error "need to define filesystem"
 #endif
@@ -357,5 +416,9 @@ void loop() {
     WiFi.reconnect();
     last_wifi_reconnect_attempt = millis();
   }
+#endif
+
+#if defined(ESP32) && defined(MACMESH_WIFI_TIME)
+  macmeshPollWifiTime();
 #endif
 }

@@ -170,6 +170,19 @@ protected:
 public:
   void savePrefs() { _store->savePrefs(_prefs, sensors.node_lat, sensors.node_lon); }
 
+  /* A real UTC time from outside the mesh -- today that means SNTP over WiFi.
+     setClockAuthoritative() is protected, and main.cpp needs to reach it, but
+     the plausibility gate belongs next to the one CMD_SET_DEVICE_TIME already
+     applies rather than at the call site. Once this succeeds the mesh stops
+     voting on the clock, which is the entire point: neighbours bootstrap off
+     each other and drift together, so a corroborated consensus is still wrong.
+     Returns false if the value looks impossible, leaving the RTC alone. */
+  bool applyExternalTime(uint32_t secs) {
+    if (!(isPlausibleAdvertTime(secs) || isPlausibleOwnClock(secs))) return false;
+    setClockAuthoritative(secs);
+    return true;
+  }
+
 #if ENV_INCLUDE_GPS == 1
   void applyGpsPrefs() {
     sensors.setSettingValue("gps", _prefs.gps_enabled ? "1" : "0");

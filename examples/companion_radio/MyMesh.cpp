@@ -47,6 +47,7 @@
 #define CMD_GET_ADVERT_PATH           42
 #define CMD_GET_TUNING_PARAMS         43
 // NOTE: CMD range 44..49 parked, potentially for WiFi operations
+#define CMD_SET_WIFI                  44
 #define CMD_SEND_BINARY_REQ           50
 #define CMD_FACTORY_RESET             51
 #define CMD_SEND_PATH_DISCOVERY_REQ   52
@@ -1265,6 +1266,32 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeOKFrame();
     } else {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG); // invalid geo coordinate
+    }
+  } else if (cmd_frame[0] == CMD_SET_WIFI && len >= 2) {
+    /*
+     * [44][ssid_len][ssid][psk], psk running to the end of the frame. An empty
+     * ssid clears the credentials and stops the radio coming up at all.
+     *
+     * This is a CLOCK setting, not a transport one. WiFi here exists only to
+     * reach SNTP; the companion protocol stays on the header UART and BLE. The
+     * psk crosses the link in the clear and rests unencrypted in SPIFFS, which
+     * is acceptable for a bench node on a home network and should not be a
+     * surprise to anyone reading this.
+     *
+     * Takes effect at the next boot -- the radio is started once, in setup().
+     */
+    int slen = cmd_frame[1];
+    int plen = (int)len - 2 - slen;
+    if (plen < 0 || slen > (int)sizeof(_prefs.wifi_ssid) - 1
+                 || plen > (int)sizeof(_prefs.wifi_psk) - 1) {
+      writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+    } else {
+      memcpy(_prefs.wifi_ssid, &cmd_frame[2], slen);
+      _prefs.wifi_ssid[slen] = 0;
+      memcpy(_prefs.wifi_psk, &cmd_frame[2 + slen], plen);
+      _prefs.wifi_psk[plen] = 0;
+      savePrefs();
+      writeOKFrame();
     }
   } else if (cmd_frame[0] == CMD_GET_DEVICE_TIME) {
     uint8_t reply[5];
