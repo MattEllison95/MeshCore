@@ -39,4 +39,7 @@ struct NodePrefs {  // persisted to file
      the node never brings the radio up at all. */
   char wifi_ssid[33];
   char wifi_psk[64];
+  /* Empty means the compiled-in default. Settable so a node can be pointed at
+     a LAN time server, or at a pool closer than the global one. */
+  char ntp_server[64];
 };

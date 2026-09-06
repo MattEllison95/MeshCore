@@ -281,6 +281,10 @@ elif [[ $1 == "build-room-server-firmwares" ]]; then
 elif [[ $1 == "get-companion-firmwares-to-build" ]]; then
   get_pio_envs_ending_with_string "_companion_radio_usb"
   get_pio_envs_ending_with_string "_companion_radio_ble"
+  # MacMesh: companion protocol on a hardware UART, for a host with no USB or
+  # Bluetooth of its own. Without this the environment builds locally but is
+  # never picked up by the release workflow.
+  get_pio_envs_ending_with_string "_companion_radio_serial"
 elif [[ $1 == "get-repeater-firmwares-to-build" ]]; then
   get_pio_envs_ending_with_string "_repeater"
 elif [[ $1 == "get-room-server-firmwares-to-build" ]]; then

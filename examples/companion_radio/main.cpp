@@ -223,9 +223,12 @@ void halt() {
       /* Started only once there is an address -- the server name has to
          resolve, and this also covers a node that boots out of range and
          associates later. */
+      const NodePrefs* prefs = the_mesh.getNodePrefs();
+      const char* server = (prefs->ntp_server[0] != 0)
+                         ? prefs->ntp_server : MACMESH_NTP_SERVER;
       sntp_set_time_sync_notification_cb(macmeshSntpSynced);
       // UTC with no DST rules: MeshCore timestamps are epoch seconds throughout.
-      configTime(0, 0, MACMESH_NTP_SERVER);
+      configTime(0, 0, server);
       macmesh_ntp_started = true;
     }
   }

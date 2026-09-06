@@ -238,6 +238,7 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
        grows at the end rather than carrying a version. */
     file.read((uint8_t *)_prefs.wifi_ssid, sizeof(_prefs.wifi_ssid));                      // 137
     file.read((uint8_t *)_prefs.wifi_psk, sizeof(_prefs.wifi_psk));                        // 170
+    file.read((uint8_t *)_prefs.ntp_server, sizeof(_prefs.ntp_server));                    // 234
 
     file.close();
   }
@@ -280,6 +281,7 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)_prefs.default_scope_key, sizeof(_prefs.default_scope_key));     // 121
     file.write((uint8_t *)_prefs.wifi_ssid, sizeof(_prefs.wifi_ssid));                      // 137
     file.write((uint8_t *)_prefs.wifi_psk, sizeof(_prefs.wifi_psk));                        // 170
+    file.write((uint8_t *)_prefs.ntp_server, sizeof(_prefs.ntp_server));                    // 234
 
     file.close();
   }

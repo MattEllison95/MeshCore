@@ -48,6 +48,7 @@
 #define CMD_GET_TUNING_PARAMS         43
 // NOTE: CMD range 44..49 parked, potentially for WiFi operations
 #define CMD_SET_WIFI                  44
+#define CMD_SET_NTP                   45
 #define CMD_SEND_BINARY_REQ           50
 #define CMD_FACTORY_RESET             51
 #define CMD_SEND_PATH_DISCOVERY_REQ   52
@@ -1293,6 +1294,18 @@ void MyMesh::handleCmdFrame(size_t len) {
       _prefs.wifi_ssid[slen] = 0;
       memcpy(_prefs.wifi_psk, &cmd_frame[2 + slen], plen);
       _prefs.wifi_psk[plen] = 0;
+      savePrefs();
+      writeOKFrame();
+    }
+  } else if (cmd_frame[0] == CMD_SET_NTP && len >= 1) {
+    /* [45][server] -- the name runs to the end of the frame. Empty restores the
+       compiled-in default. Takes effect at the next boot, with the radio. */
+    int n = (int)len - 1;
+    if (n > (int)sizeof(_prefs.ntp_server) - 1) {
+      writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+    } else {
+      memcpy(_prefs.ntp_server, &cmd_frame[1], n);
+      _prefs.ntp_server[n] = 0;
       savePrefs();
       writeOKFrame();
     }

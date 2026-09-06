@@ -1,7 +1,7 @@
 > ## This is the MacMesh fork
 >
 > A fork of [meshcore-dev/MeshCore](https://github.com/meshcore-dev/MeshCore),
-> maintained for [MacMesh](https://github.com/MattEllison95/macmesh-meshcore) —
+> maintained for [MacMesh](https://github.com/XYZZY-LLC/macmesh-meshcore) —
 > a classic Macintosh mesh client that talks to a Heltec V4 over the Mac's modem
 > serial port. Everything below this box is upstream's README and still applies.
 >
