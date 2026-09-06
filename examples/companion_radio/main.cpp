@@ -173,10 +173,19 @@ void halt() {
     // SNTP task context: record only, and apply from loop().
     macmesh_ntp_secs = (uint32_t)tv->tv_sec;
     macmesh_ntp_have = true;
+#ifdef MACMESH_WIFI_TIME_DEBUG
+    Serial.printf("[macmesh] SNTP SYNCED %lu\n", (unsigned long)tv->tv_sec);
+#endif
   }
 
   static void macmeshStartWifiTime() {
     const NodePrefs* prefs = the_mesh.getNodePrefs();
+#ifdef MACMESH_WIFI_TIME_DEBUG
+    // The ssid only. Never print the psk.
+    Serial.printf("[macmesh] ssid=\"%s\" len=%u psk_len=%u\n",
+                  prefs->wifi_ssid, (unsigned)strlen(prefs->wifi_ssid),
+                  (unsigned)strlen(prefs->wifi_psk));
+#endif
     if (prefs->wifi_ssid[0] == 0) return;   // never configured
 
     board.setInhibitSleep(true);   // a sleeping node never finishes the handshake
@@ -188,6 +197,18 @@ void halt() {
   static void macmeshPollWifiTime() {
     if (millis() < macmesh_ntp_next_poll) return;
     macmesh_ntp_next_poll = millis() + 2000;
+#ifdef MACMESH_WIFI_TIME_DEBUG
+    {
+      static unsigned long last_report = 0;
+      if (millis() - last_report > 5000) {
+        last_report = millis();
+        Serial.printf("[macmesh] wifi=%d ip=%s sntp_started=%d sync=%d clock=%lu\n",
+                      (int)WiFi.status(), WiFi.localIP().toString().c_str(),
+                      (int)macmesh_ntp_started, (int)sntp_get_sync_status(),
+                      (unsigned long)time(NULL));
+      }
+    }
+#endif
 
     if (macmesh_ntp_have) {
       macmesh_ntp_have = false;
