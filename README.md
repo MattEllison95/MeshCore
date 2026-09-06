@@ -1,3 +1,45 @@
+> ## This is the MacMesh fork
+>
+> A fork of [meshcore-dev/MeshCore](https://github.com/meshcore-dev/MeshCore),
+> maintained for [MacMesh](https://github.com/MattEllison95/macmesh-meshcore) —
+> a classic Macintosh mesh client that talks to a Heltec V4 over the Mac's modem
+> serial port. Everything below this box is upstream's README and still applies.
+>
+> **You do not have to care about MacMesh to find this useful.** The changes fall
+> into two groups, and the second stands on its own:
+>
+> **NTP over WiFi — useful to anyone running MeshCore on an ESP32.** Upstream
+> MeshCore has no NTP anywhere in the tree, so a node with no GPS and no phone
+> ever attached never learns what time it is. It cold-boots to May 2024, is
+> clamped to its firmware build date, and is then moved only by adverts from
+> neighbours running the same bootstrap — which take the *bottom* of the advert
+> cluster, so a neighbourhood of such nodes settles **ahead** of real time and
+> corroborates itself there. Measured on a bench node: consistently about two
+> days fast. Since MeshCore timestamps outgoing messages on the client, that
+> wrong clock is what every message carries.
+>
+> This fork adds SNTP under `MACMESH_WIFI_TIME`, with credentials set over the
+> companion protocol (`CMD_SET_WIFI`, opcode 44 — inside the range upstream had
+> already parked for WiFi operations) and persisted in `NodePrefs`. Once a real
+> clock has spoken, the mesh stops being allowed to move it.
+>
+> It deliberately does **not** use `WIFI_SSID`. That macro is the companion
+> *transport* selector in `examples/companion_radio/main.cpp` and wins ahead of
+> the UART and BLE branches — defining it moves the companion protocol to TCP.
+> Here WiFi is a clock source only, and BLE keeps working alongside it.
+>
+> **MacMesh-specific — carrier hardware.** A `MultiSerialInterface` that runs the
+> header UART and BLE at once so a Macintosh and a phone can both be attached;
+> `SERIAL_TX=47` / `SERIAL_RX=48` for the MacMesh carrier's wiring; and a Vext
+> polarity fix for the Heltec V4. Of no use on other hardware, and harmless.
+>
+> Build: `pio run -e heltec_v4_companion_radio_serial` from a clean clone — the
+> environment is committed, so there is no patch step.
+>
+> The SNTP work is intentionally kept separable and is offered upstream; MeshCore
+> lacking NTP is a general gap rather than a MacMesh quirk. Upstream asks for PRs
+> against `dev`. MIT licensed, same as upstream — see `license.txt`.
+
 ## About MeshCore
 
 MeshCore is a lightweight, portable C++ library that enables multi-hop packet routing for embedded projects using LoRa and other packet radios. It is designed for developers who want to create resilient, decentralized communication networks that work without the internet.
