@@ -65,6 +65,7 @@ class BaseChatMesh : public mesh::Mesh {
   uint32_t _clock_vote_time;    // pending large clock correction, and how many
   uint8_t _clock_vote_count;    // neighbours have agreed to it so far
   bool _clock_authoritative;    // a host set the time; stop listening to adverts
+  bool _clock_external;         // a real clock is coming; the mesh is not a source
   int sort_array[MAX_CONTACTS+MAX_ANON_CONTACTS];
   int matching_peer_indexes[MAX_SEARCH_RESULTS];
   unsigned long txt_send_timeout;
@@ -92,6 +93,7 @@ protected:
     _clock_vote_time = 0;
     _clock_vote_count = 0;
     _clock_authoritative = false;
+    _clock_external = false;
     _pendingLoopback = NULL;
     memset(connections, 0, sizeof(connections));
   }
@@ -105,6 +107,13 @@ protected:
   void considerAdvertTime(uint32_t timestamp);
   // Time from a host with a real clock: overrides the mesh from here on.
   void setClockAuthoritative(uint32_t secs);
+  /*
+   * Declare that a real time source exists (SNTP today) even though it has not
+   * answered yet. The mesh then never gets to move this clock -- not at boot
+   * from stored contacts, not at runtime from adverts. Being briefly unset is
+   * better than being confidently two days out.
+   */
+  void setClockExternal(bool on) { _clock_external = on; }
   void resetContacts() { num_contacts = 0; }
   void populateContactFromAdvert(ContactInfo& ci, const mesh::Identity& id, const AdvertDataParser& parser, uint32_t timestamp);
   ContactInfo* allocateContactSlot(bool transient_only=false); // helper to find slot for new contact

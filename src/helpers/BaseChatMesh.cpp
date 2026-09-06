@@ -188,6 +188,15 @@ void BaseChatMesh::bootstrapRTCfromContacts() {
     getRTCClock()->setCurrentTime(clockFloor());
   }
 
+  /*
+   * With a real time source configured, stop here. The contacts estimate is the
+   * mesh's consensus, and on a mesh that runs fast it is confidently wrong --
+   * observed pulling a freshly-synced clock 2d 5h forward on every reboot,
+   * back to the exact value SNTP had just corrected. Leaving the clock at the
+   * build-date floor for the minute SNTP takes is the better trade.
+   */
+  if (_clock_external) return;
+
   uint32_t est = estimateTimeFromContacts();
   if (est == 0) return;
 
@@ -223,7 +232,7 @@ void BaseChatMesh::considerAdvertTime(uint32_t timestamp) {
    * corroborate each other, and adopting their consensus walks the clock
    * steadily forward with no way back.
    */
-  if (_clock_authoritative) return;
+  if (_clock_authoritative || _clock_external) return;
 
   if (timestamp <= now || !isPlausibleAdvertTime(timestamp)) return;
 

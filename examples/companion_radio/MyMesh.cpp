@@ -1006,6 +1006,9 @@ void MyMesh::begin(bool has_display) {
 
   resetContacts();
   _store->loadContacts(this);
+  /* Set before the bootstrap: with WiFi credentials stored, SNTP is the clock
+     and the mesh must not be allowed to move it in the meantime. */
+  setClockExternal(_prefs.wifi_ssid[0] != 0);
   bootstrapRTCfromContacts();
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   _store->loadChannels(this);
