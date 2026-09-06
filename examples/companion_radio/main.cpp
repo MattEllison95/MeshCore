@@ -150,11 +150,30 @@ void halt() {
 #if defined(ESP32) && defined(MACMESH_WIFI_TIME)
   #include <WiFi.h>
   #include <time.h>
+  #include <esp_sntp.h>
   #ifndef MACMESH_NTP_SERVER
     #define MACMESH_NTP_SERVER "pool.ntp.org"
   #endif
-  static bool macmesh_ntp_applied = false;
+
+  /*
+   * Do NOT infer "SNTP has answered" from time(). ESP32RTCClock implements
+   * MeshCore's clock with settimeofday()/time(), so time() returns the node's
+   * OWN mesh-bootstrapped clock -- not an unset epoch. Reading it back and
+   * feeding it to applyExternalTime() sets the clock to the value it already
+   * had, reports success, and marks it authoritative, freezing the wrong time
+   * and locking the mesh out of ever correcting it. That is a bug this file
+   * shipped with once; the sync callback is the only honest signal.
+   */
+  static volatile bool macmesh_ntp_have = false;
+  static volatile uint32_t macmesh_ntp_secs = 0;
+  static bool macmesh_ntp_started = false;
   static unsigned long macmesh_ntp_next_poll = 0;
+
+  static void macmeshSntpSynced(struct timeval *tv) {
+    // SNTP task context: record only, and apply from loop().
+    macmesh_ntp_secs = (uint32_t)tv->tv_sec;
+    macmesh_ntp_have = true;
+  }
 
   static void macmeshStartWifiTime() {
     const NodePrefs* prefs = the_mesh.getNodePrefs();
@@ -164,22 +183,29 @@ void halt() {
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
     WiFi.begin(prefs->wifi_ssid, prefs->wifi_psk);
-    // UTC with no DST rules: MeshCore timestamps are epoch seconds throughout.
-    configTime(0, 0, MACMESH_NTP_SERVER);
   }
 
   static void macmeshPollWifiTime() {
-    if (macmesh_ntp_applied) return;
     if (millis() < macmesh_ntp_next_poll) return;
     macmesh_ntp_next_poll = millis() + 2000;
-    if (WiFi.status() != WL_CONNECTED) return;
 
-    /* Before SNTP answers, time() returns something near the epoch. Rather than
-       test that with a second magic constant, hand it to the same plausibility
-       gate CMD_SET_DEVICE_TIME uses and let it refuse. */
-    time_t t = time(NULL);
-    if (t > 0 && the_mesh.applyExternalTime((uint32_t)t)) {
-      macmesh_ntp_applied = true;
+    if (macmesh_ntp_have) {
+      macmesh_ntp_have = false;
+      /* Applied on every sync, not just the first: SNTP re-checks periodically,
+         and a node left running should follow it rather than drift. */
+      the_mesh.applyExternalTime(macmesh_ntp_secs);
+      return;
+    }
+
+    if (WiFi.status() != WL_CONNECTED) return;
+    if (!macmesh_ntp_started) {
+      /* Started only once there is an address -- the server name has to
+         resolve, and this also covers a node that boots out of range and
+         associates later. */
+      sntp_set_time_sync_notification_cb(macmeshSntpSynced);
+      // UTC with no DST rules: MeshCore timestamps are epoch seconds throughout.
+      configTime(0, 0, MACMESH_NTP_SERVER);
+      macmesh_ntp_started = true;
     }
   }
 #endif
