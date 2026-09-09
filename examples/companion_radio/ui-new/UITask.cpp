@@ -223,7 +223,12 @@ public:
         display.setTextSize(1);
         display.drawTextCentered(display.width() / 2, 54, tmp);
       #endif
-      if (_task->hasConnection()) {
+      /*
+       * Deliberately not hasConnection(): that is true whenever any transport
+       * is up, and the carrier's UART is up from power-on, so the PIN below was
+       * unreachable and nobody could read the number they needed to pair.
+       */
+      if (_task->hasPairedConnection()) {
         display.setColor(DisplayDriver::GREEN);
         display.setTextSize(1);
         display.drawTextCentered(display.width() / 2, 43, "< Connected >");

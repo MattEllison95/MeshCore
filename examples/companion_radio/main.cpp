@@ -359,7 +359,7 @@ void setup() {
     ble_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
                         the_mesh.getBLEPin());
     serial_interface.add(&uart_interface);
-    serial_interface.add(&ble_interface);
+    serial_interface.add(&ble_interface, true);
   #elif defined(SERIAL_RX)
     companion_serial.setPins(SERIAL_RX, SERIAL_TX);
     companion_serial.begin(SERIAL_BAUD);
@@ -402,7 +402,7 @@ void setup() {
   ble_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
                       the_mesh.getBLEPin());
   serial_interface.add(&uart_interface);
-  serial_interface.add(&ble_interface);
+  serial_interface.add(&ble_interface, true);
 #elif defined(BLE_PIN_CODE)
   serial_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
 #elif defined(SERIAL_RX)

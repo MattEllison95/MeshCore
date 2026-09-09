@@ -37,6 +37,9 @@ public:
   bool hasConnection() const { return _connected; }
   uint16_t getBattMilliVolts() const { return _board->getBattMilliVolts(); }
   bool isSerialEnabled() const { return _serial->isEnabled(); }
+  /* True only when a transport a user pairs with has a client. See
+     BaseSerialInterface::isPairedConnection(). */
+  bool hasPairedConnection() const { return _serial->isPairedConnection(); }
   void enableSerial() { _serial->enable(); }
   void disableSerial() { _serial->disable(); }
   virtual void msgRead(int msgcount) = 0;

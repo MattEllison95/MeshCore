@@ -15,6 +15,15 @@ public:
 
   virtual bool isConnected() const = 0;
 
+  /*
+   * Whether a transport a user can actually pair with has a client attached.
+   * Distinct from isConnected(), which answers "can I write" -- a 3-wire UART
+   * has no carrier detect and is connected from power-on, so anything shown to
+   * a person on the strength of isConnected() is shown forever. Defaults to
+   * isConnected(), which is correct when there is only one transport.
+   */
+  virtual bool isPairedConnection() const { return isConnected(); }
+
   virtual bool isWriteBusy() const = 0;
   virtual size_t writeFrame(const uint8_t src[], size_t len) = 0;
   virtual size_t checkRecvFrame(uint8_t dest[]) = 0;
