@@ -972,8 +972,6 @@ void MyMesh::begin(bool has_display) {
   // load persisted prefs
   _store->loadPrefs(_prefs, sensors.node_lat, sensors.node_lon);
 
-  strncpy(_prefs.node_name, "MacMesh", sizeof(_prefs.node_name) - 1);
-  _prefs.node_name[sizeof(_prefs.node_name) - 1] = 0;
 
   // sanitise bad pref values
   _prefs.rx_delay_base = constrain(_prefs.rx_delay_base, 0, 20.0f);
