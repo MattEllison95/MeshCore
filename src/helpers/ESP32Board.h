@@ -14,6 +14,9 @@
 #include <Wire.h>
 #include "soc/rtc.h"
 #include "esp_system.h"
+#if __has_include("esp_mac.h")
+  #include "esp_mac.h"
+#endif
 
 class ESP32Board : public mesh::MainBoard {
 protected:
@@ -24,6 +27,20 @@ protected:
 public:
   void begin() {
     // for future use, sub-classes SHOULD call this from their begin()
+  #ifdef MC_DUALBOOT_MAC_OFFSET
+    /*
+     * Shift the base MAC so this firmware's BLE address differs from the other
+     * one on the same board. Sharing an address makes a paired phone re-bond on
+     * every switch. The node identity lives in the keystore, not the MAC, so
+     * this does not change who it is on the mesh.
+     */
+    {
+      uint8_t base_mac[6];
+      esp_read_mac(base_mac, ESP_MAC_WIFI_STA);
+      base_mac[5] = (uint8_t)(base_mac[5] + MC_DUALBOOT_MAC_OFFSET);
+      esp_base_mac_addr_set(base_mac);
+    }
+  #endif
     startup_reason = BD_STARTUP_NORMAL;    
 
   #ifdef ESP32_CPU_FREQ
