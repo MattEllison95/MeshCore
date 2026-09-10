@@ -25,6 +25,7 @@
 
 class MultiSerialInterface : public BaseSerialInterface {
   BaseSerialInterface *_children[MAX_SERIAL_CHILDREN];
+  bool _pairable[MAX_SERIAL_CHILDREN];
   int _count;
   int _next;            /* round-robin, so one busy child cannot starve another */
   int _last_src;        /* child that supplied the frame being handled, -1 = none */
@@ -32,10 +33,15 @@ class MultiSerialInterface : public BaseSerialInterface {
 public:
   MultiSerialInterface() : _count(0), _next(0), _last_src(-1) { }
 
-  bool add(BaseSerialInterface *child) {
+  /*
+   * pairable marks a transport a user joins deliberately -- BLE, which needs a
+   * PIN. A UART is not pairable: it is connected because the cable exists.
+   */
+  bool add(BaseSerialInterface *child, bool pairable = false) {
     if (child == NULL || _count >= MAX_SERIAL_CHILDREN) {
       return false;
     }
+    _pairable[_count] = pairable;
     _children[_count++] = child;
     return true;
   }
@@ -61,6 +67,13 @@ public:
 
   /* Connected if ANY transport has a client. MyMesh gates unsolicited pushes
      on this, so it must not go false just because BLE is unpaired. */
+  bool isPairedConnection() const override {
+    for (int i = 0; i < _count; i++) {
+      if (_pairable[i] && _children[i]->isConnected()) return true;
+    }
+    return false;
+  }
+
   bool isConnected() const override {
     for (int i = 0; i < _count; i++) {
       if (_children[i]->isConnected()) return true;

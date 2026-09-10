@@ -972,8 +972,20 @@ void MyMesh::begin(bool has_display) {
   // load persisted prefs
   _store->loadPrefs(_prefs, sensors.node_lat, sensors.node_lon);
 
-  strncpy(_prefs.node_name, "MacMesh", sizeof(_prefs.node_name) - 1);
+  /*
+   * A stored name wins, but it comes off flash and has to be treated as such:
+   * terminate it, and fall back to the key-derived default if it is empty. The
+   * hardcoded name that used to sit here was doing the terminating as a side
+   * effect, so removing it without this left a name that could run off the end
+   * of the buffer.
+   */
   _prefs.node_name[sizeof(_prefs.node_name) - 1] = 0;
+  if (_prefs.node_name[0] == 0) {
+    char pub_key_hex[10];
+    mesh::Utils::toHex(pub_key_hex, self_id.pub_key, 4);
+    strcpy(_prefs.node_name, pub_key_hex);
+  }
+
 
   // sanitise bad pref values
   _prefs.rx_delay_base = constrain(_prefs.rx_delay_base, 0, 20.0f);

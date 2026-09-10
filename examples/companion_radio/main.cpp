@@ -2,6 +2,17 @@
 #include <Mesh.h>
 #include "MyMesh.h"
 
+/*
+ * Which flash partition MeshCore mounts. Stock builds use "spiffs"; a build
+ * sharing the flash with Meshtastic must not, because Meshtastic mounts the
+ * partition labelled "spiffs" as LittleFS and the two formats are mutually
+ * unreadable -- whichever booted would reformat the other's storage and take
+ * its private key with it.
+ */
+#ifndef MC_FS_PARTITION_LABEL
+  #define MC_FS_PARTITION_LABEL "spiffs"
+#endif
+
 #ifdef MACMESH_UART_DIAGNOSTIC
 extern volatile uint32_t macmesh_uart_diag_rx_bytes;
 extern volatile uint32_t macmesh_uart_diag_tx_frames;
@@ -348,7 +359,7 @@ void setup() {
     ble_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
                         the_mesh.getBLEPin());
     serial_interface.add(&uart_interface);
-    serial_interface.add(&ble_interface);
+    serial_interface.add(&ble_interface, true);
   #elif defined(SERIAL_RX)
     companion_serial.setPins(SERIAL_RX, SERIAL_TX);
     companion_serial.begin(SERIAL_BAUD);
@@ -358,7 +369,7 @@ void setup() {
   #endif
     the_mesh.startInterface(serial_interface);
 #elif defined(ESP32)
-  SPIFFS.begin(true);
+  SPIFFS.begin(true, "/spiffs", 10, MC_FS_PARTITION_LABEL);
   store.begin();
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
@@ -391,7 +402,7 @@ void setup() {
   ble_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
                       the_mesh.getBLEPin());
   serial_interface.add(&uart_interface);
-  serial_interface.add(&ble_interface);
+  serial_interface.add(&ble_interface, true);
 #elif defined(BLE_PIN_CODE)
   serial_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
 #elif defined(SERIAL_RX)
